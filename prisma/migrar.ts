@@ -62,11 +62,17 @@ async function main() {
   });
   if (!planta) throw new Error(`No existe la planta "${slug}". Corré el seed primero.`);
 
+  // Las credenciales salen del entorno. Contra la copia local sirven las de
+  // siempre; contra producción —por un túnel SSH— son las del `.env` de cada
+  // Laravel, y no tienen por qué quedar escritas en este archivo ni en el
+  // historial del shell:
+  //
+  //   read -s MYSQL_PASSWORD && export MYSQL_PASSWORD
   const my = await mysql.createConnection({
-    host: "127.0.0.1",
-    port: 3307,
-    user: "root",
-    password: "root",
+    host: process.env.MYSQL_HOST ?? "127.0.0.1",
+    port: Number(process.env.MYSQL_PORT ?? 3307),
+    user: process.env.MYSQL_USER ?? "root",
+    password: process.env.MYSQL_PASSWORD ?? "root",
     database: process.env.MYSQL_DB ?? "marevitotal",
     dateStrings: true, // que el driver no toque las fechas
   });
