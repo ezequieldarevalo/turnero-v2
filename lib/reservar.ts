@@ -11,6 +11,7 @@ import {
   primera, validarNombre, validarEmail, validarTelefono, validarAnio,
   validarDominio, validarCombustible, recortar,
 } from "@/lib/validaciones";
+import { EN_ESPERA } from "@/lib/disponibilidad";
 
 export interface DatosReserva {
   slug: string;
@@ -37,7 +38,31 @@ export type ResultadoReserva =
       detalle?: string;
     };
 
-export async function reservar(d: DatosReserva, ip: string | null): Promise<ResultadoReserva> {
+/**
+ * Marca como vencida la reserva que retiene un cupo, si su plazo ya pasó.
+ *
+ * Devuelve si liberó algo. La condición sobre `venceAt` va en el propio UPDATE
+ * —no se lee y después se escribe— para que dos personas reservando el mismo
+ * horario al mismo tiempo no liberen las dos el mismo cupo y se pisen.
+ */
+async function vencerOcupante(lineaId: number, inicio: Date): Promise<boolean> {
+  const { count } = await prisma.turno.updateMany({
+    where: {
+      lineaId,
+      inicio,
+      estado: { in: EN_ESPERA },
+      venceAt: { lt: new Date() },
+    },
+    data: { estado: EstadoTurno.EXPIRADO, venceAt: null, pagoUrl: null },
+  });
+  return count > 0;
+}
+
+export async function reservar(
+  d: DatosReserva,
+  ip: string | null,
+  reintento = false
+): Promise<ResultadoReserva> {
   if (!d.acepta) return { ok: false, motivo: "SIN_CONSENTIMIENTO" };
 
   const planta = await prisma.planta.findUniqueOrThrow({ where: { slug: d.slug } });
@@ -135,6 +160,15 @@ export async function reservar(d: DatosReserva, ip: string | null): Promise<Resu
     // alguien tomó el cupo entre que se mostró y que se confirmó.
     const codigo = e?.code === "P2002" ? "23505" : e?.meta?.code ?? e?.code;
     if (String(codigo).includes("23505") || e?.code === "P2002") {
+      // Puede no ser una reserva viva sino una muerta: alguien que empezó a
+      // reservar, no pagó, y su plazo ya pasó. El índice único no distingue
+      // —una condición con `now()` no se puede indexar—, así que la diferencia
+      // se hace acá: si el ocupante ya venció, se lo marca y se reintenta una
+      // vez. Sin esto, la disponibilidad ofrecería un horario que la reserva
+      // después rechaza.
+      if (!reintento && (await vencerOcupante(d.lineaId, new Date(d.inicioIso)))) {
+        return reservar(d, ip, true);
+      }
       return { ok: false, motivo: "CUPO_TOMADO" };
     }
     throw e;

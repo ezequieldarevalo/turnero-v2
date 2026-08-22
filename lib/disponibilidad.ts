@@ -19,6 +19,16 @@ export const ESTADOS_OCUPANTES = [
   EstadoTurno.COMPLETADO,
 ];
 
+/** Ocupan el cupo pase lo que pase. */
+export const OCUPAN_SIEMPRE = [EstadoTurno.CONFIRMADO, EstadoTurno.COMPLETADO];
+
+/**
+ * Ocupan el cupo solo mientras su plazo siga corriendo. Pasado `venceAt` el
+ * horario vuelve a estar disponible, aunque la fila todavía diga "pendiente":
+ * el estado lo corrige el proceso periódico, pero el cupo se libera al instante.
+ */
+export const EN_ESPERA = [EstadoTurno.PENDIENTE_PAGO, EstadoTurno.PENDIENTE_CONFIRMACION];
+
 export interface Cupo {
   lineaId: number;
   inicio: Date;
@@ -132,11 +142,21 @@ export async function calcularDisponibilidad(
     prisma.turno.findMany({
       where: {
         plantaId: planta.id,
-        estado: { in: ESTADOS_OCUPANTES },
         inicio: { gte: ventana.desde, lt: ventana.hasta },
         // Sin línea = atención sin turno previo: no reservó nada, así que no
         // tapa ningún cupo.
         lineaId: { not: null },
+        // Una reserva cuyo plazo ya pasó NO tapa el cupo, aunque el proceso
+        // periódico todavía no la haya marcado como vencida. Si dependiera de
+        // eso, el horario quedaría retenido hasta la próxima corrida del cron
+        // —minutos de más sobre un cupo que ya es de cualquiera—. El sistema
+        // viejo compara contra el reloj en cada consulta y hace bien; esto es
+        // lo mismo. `reservar()` cierra la otra mitad: al chocar contra el
+        // índice único vence la reserva muerta y toma el lugar.
+        OR: [
+          { estado: { in: OCUPAN_SIEMPRE } },
+          { estado: { in: EN_ESPERA }, OR: [{ venceAt: null }, { venceAt: { gt: hoy } }] },
+        ],
         ...(opts.excluirTurnoId ? { id: { not: opts.excluirTurnoId } } : {}),
       },
       select: { lineaId: true, inicio: true },
