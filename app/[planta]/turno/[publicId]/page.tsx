@@ -112,11 +112,23 @@ export default async function Page({
         puedeReprogramar={permitido.reprogramar}
       />
 
-      {!permitido.reprogramar && !permitido.cancelar && turno.estado === "CONFIRMADO" && (
+      {/*
+        El WhatsApp va SIEMPRE, no solo cuando no hay botones. Los dos caminos
+        conviven: el cliente se autogestiona hasta el tope de reprogramaciones,
+        y a partir de ahí —o si necesita algo que la pantalla no resuelve— tiene
+        a dónde escribir. Cuando el botón desaparece por haber llegado al tope,
+        esta línea es lo único que le queda: si también dependiera de que no
+        haya botones, el cliente se quedaría sin salida y sin explicación.
+      */}
+      {turno.estado === "CONFIRMADO" && (
         <p className="pago__nota">
-          {turno.planta.whatsappContacto
-            ? `Para reprogramar o cancelar, comunicate por WhatsApp al ${turno.planta.whatsappContacto}.`
-            : "Para reprogramar o cancelar, comunicate con la planta."}
+          {permitido.reprogramar || permitido.cancelar
+            ? turno.planta.whatsappContacto
+              ? `¿Necesitás algo más? Escribinos por WhatsApp al ${turno.planta.whatsappContacto}.`
+              : null
+            : turno.planta.whatsappContacto
+              ? `Para reprogramar o cancelar, comunicate por WhatsApp al ${turno.planta.whatsappContacto}.`
+              : "Para reprogramar o cancelar, comunicate con la planta."}
         </p>
       )}
     </main>

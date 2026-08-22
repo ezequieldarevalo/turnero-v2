@@ -111,7 +111,12 @@ function filtro(campo: Campo, texto: string): Prisma.TurnoWhereInput {
       return { dominio: normalizarDominio(texto) };
 
     case "email":
-      return { titularEmail: { contains: texto.toLowerCase().trim() } };
+      // Sin distinguir mayúsculas, igual que el nombre. El camino de reserva
+      // normaliza a minúsculas, pero los datos migrados no: 26.916 de los
+      // 63.035 turnos traen el correo en mayúsculas desde el sistema viejo.
+      // Comparando de forma sensible, el mostrador no encontraría a cuatro de
+      // cada diez clientes buscándolos por su correo.
+      return { titularEmail: { contains: texto.trim(), mode: "insensitive" } };
 
     case "telefono":
       return { titularTelefono: { contains: texto.replace(/[\s()-]/g, "") } };

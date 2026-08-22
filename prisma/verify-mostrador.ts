@@ -2,8 +2,8 @@
  * Las operaciones del mostrador sobre un turno.
  *
  * Lo central acá es que el mostrador NO hereda los límites del cliente: si los
- * heredara, Las Heras —que manda a sus clientes a WhatsApp en vez de dejarlos
- * reprogramar solos— no podría reprogramar tampoco del otro lado del WhatsApp.
+ * heredara, al cliente que ya gastó sus dos reprogramaciones y llama por
+ * WhatsApp no se lo podría atender del otro lado de ese WhatsApp.
  */
 process.env.CORREO_DESACTIVADO = "1";
 
@@ -119,15 +119,26 @@ async function main() {
   );
 
   // ── El mostrador no hereda los límites del cliente ──────────
-  console.log("\n── Las Heras: el cliente no reprograma, el mostrador sí ──");
+  console.log("\n── Las Heras: el cliente reprograma hasta el tope, el mostrador siempre ──");
   const { turno: lh, planta: plantaLh } = await nuevo("lasheras", 0, EstadoTurno.CONFIRMADO);
 
-  const puedeCliente = await accionesCliente(lh.publicId, "lasheras");
-  check(!puedeCliente.reprogramar, "al cliente no se le ofrece reprogramar");
+  const alPrincipio = await accionesCliente(lh.publicId, "lasheras");
+  check(alPrincipio.reprogramar, "al cliente se le ofrece reprogramar");
+
+  // Gastadas las dos, el botón desaparece y de ahí en más es por WhatsApp. Se
+  // simula el contador en vez de reprogramar dos veces de verdad: lo que se
+  // prueba es el tope, no el camino de reserva, que ya tiene su verificación.
+  await prisma.turno.update({ where: { id: lh.id }, data: { reprogramaciones: 2 } });
+
+  const enElTope = await accionesCliente(lh.publicId, "lasheras");
+  check(!enElTope.reprogramar, "gastadas las dos, ya no se le ofrece");
   const intentoCliente = await reprogramarCliente(lh.publicId, "lasheras", {
     lineaId: lh.lineaId!, inicioIso: lh.inicio.toISOString(), duracionMin: lh.duracionMin,
   });
-  check(!intentoCliente.ok && intentoCliente.motivo === "NO_PERMITIDO", "y si lo fuerza, se le rechaza");
+  check(
+    !intentoCliente.ok && intentoCliente.motivo === "TOPE_REPROGRAMACIONES",
+    "y si lo fuerza, se le rechaza"
+  );
 
   const libres = await calcularDisponibilidad(prisma, {
     plantaSlug: "lasheras", tipoVehiculoId: auto.id, excluirTurnoId: lh.id,
@@ -151,7 +162,7 @@ async function main() {
     lineaId: otro.lineaId, inicioIso: otro.inicio.toISOString(), duracionMin: otro.duracionMin,
   }, quien);
   check(segunda.ok, "el tope de cambios es del cliente: el mostrador lo mueve igual");
-  await prisma.planta.update({ where: { id: plantaLh.id }, data: { maxReprogramaciones: null } });
+  await prisma.planta.update({ where: { id: plantaLh.id }, data: { maxReprogramaciones: 2 } });
 
   // ── Cupo tomado ─────────────────────────────────────────────
   console.log("\n── Carrera por el cupo ──");
@@ -193,7 +204,7 @@ async function main() {
 main()
   .catch(async (e) => {
     console.error(e);
-    await prisma.planta.update({ where: { slug: "lasheras" }, data: { maxReprogramaciones: null } }).catch(() => {});
+    await prisma.planta.update({ where: { slug: "lasheras" }, data: { maxReprogramaciones: 2 } }).catch(() => {});
     await limpiar().catch(() => {});
     process.exit(1);
   })

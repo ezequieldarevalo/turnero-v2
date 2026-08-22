@@ -3,8 +3,8 @@
  *
  * **No comparten reglas con la autogestión del cliente**, y es a propósito.
  * `permiteReprogramar: false` en Las Heras y Maipú existe para que el cliente no
- * mueva su turno solo, sino que llame por WhatsApp — y del otro lado de ese
- * WhatsApp está esta pantalla. Si el mostrador quedara atado al mismo
+ * mueva su turno más de dos veces, sino que llame por WhatsApp — y del otro lado
+ * de ese WhatsApp está esta pantalla. Si el mostrador quedara atado al mismo
  * parámetro, la planta se bloquearía a sí misma. Lo mismo con los plazos
  * mínimos: son para el cliente, no para quien atiende.
  */

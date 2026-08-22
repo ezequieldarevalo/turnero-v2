@@ -103,9 +103,9 @@ export function turnoConfirmado(d: DatosTurnoCorreo) {
     ${detalles(d)}
     ${d.avisoTarifa ? `<p style="font-size:14px;">${d.avisoTarifa}</p>` : ""}
     <p style="font-size:14px;">
-      ${d.whatsapp
-        ? `Si necesitás reprogramar o cancelar, escribinos por WhatsApp al ${d.whatsapp}.`
-        : `Podés reprogramar o cancelar desde <a href="${d.urlTurno}" style="color:${d.colorPrimario};">el enlace de tu turno</a>.`}
+      Podés reprogramar o cancelar desde
+      <a href="${d.urlTurno}" style="color:${d.colorPrimario};">el enlace de tu turno</a>.
+      ${d.whatsapp ? `Y si necesitás algo más, escribinos por WhatsApp al ${d.whatsapp}.` : ""}
     </p>
     <p style="font-size:14px;color:#6b7280;">Te esperamos. Llegá unos minutos antes.</p>`;
   return {

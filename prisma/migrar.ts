@@ -174,7 +174,11 @@ async function main() {
       // media historia según cómo lo hubiera tipeado quien lo cargó.
       dominio: normalizarDominio(String(f.dominio || "")),
       titularNombre: f.nombre || "",
-      titularEmail: f.email || "",
+      // A minúsculas, como hace el camino de reserva. El sistema viejo guardaba
+      // tal cual venía del formulario, y quedó casi la mitad en mayúsculas: si
+      // no se normaliza acá, el mismo cliente entra dos veces según cómo haya
+      // tipeado, y buscarlo por correo depende de adivinar el formato.
+      titularEmail: (f.email || "").trim().toLowerCase(),
       titularTelefono: f.telefono || null,
       marca: f.marca === "SIN ESPECIFICAR" ? null : f.marca,
       modelo: f.modelo === "SIN ESPECIFICAR" ? null : f.modelo,

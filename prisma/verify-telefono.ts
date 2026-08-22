@@ -22,7 +22,7 @@ const check = (ok: boolean, msg: string) => {
 };
 
 const MARCA = "TSTTEL";
-const SLUG = "maipu"; // requierePago = true, permiteReprogramar = false
+const SLUG = "maipu"; // requierePago = true, maxReprogramaciones = 2
 
 async function limpiar() {
   const ids = (await prisma.turno.findMany({ where: { dominio: { startsWith: MARCA } }, select: { id: true } }))
@@ -89,10 +89,22 @@ async function main() {
     "el cupo queda retenido: no se lo puede llevar otro mientras espera"
   );
 
-  const choque = await crearTurnoTelefonico(planta.id, await base(0, `${MARCA}02`), quien);
+  // Sobre el mismo cupo exacto, no sobre "el primero que esté libre": un cupo
+  // es línea + horario, y a las 08:00 hay uno por cada línea. Pidiendo el
+  // siguiente libre nunca se choca con nada y la prueba no probaría nada.
+  const choque = await crearTurnoTelefonico(
+    planta.id,
+    {
+      ...(await base(0, `${MARCA}02`)),
+      lineaId: cupo.lineaId,
+      inicioIso: cupo.inicio.toISOString(),
+      duracionMin: cupo.duracionMin,
+    },
+    quien
+  );
   check(
-    !choque.ok || (await libre(0)).inicio.getTime() !== cupo.inicio.getTime(),
-    "y un segundo intento sobre el mismo horario no lo duplica"
+    !choque.ok && choque.motivo === "CUPO_TOMADO",
+    "y un segundo intento sobre el mismo cupo se rechaza, no lo duplica"
   );
 
   // ── Lo que ve el titular ────────────────────────────────────

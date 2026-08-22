@@ -62,7 +62,10 @@ export async function datosDeCorreo(publicId: string): Promise<(DatosTurnoCorreo
     precio: (await precioVigente(t.plantaId, t.tipoVehiculoId, t.creadoAt)) ?? undefined,
     horasParaPagar: Math.round(t.planta.minutosExpiracionPago / 60),
     avisoTarifa: t.planta.avisoTarifa,
-    whatsapp: t.planta.permiteReprogramar ? null : t.planta.whatsappContacto,
+    // El WhatsApp no reemplaza al link: convive con él. Quien llegó al tope de
+    // reprogramaciones necesita las dos cosas en el mismo correo — el link para
+    // ver su turno, y el teléfono para lo que el link ya no le deja hacer.
+    whatsapp: t.planta.whatsappContacto,
   };
 }
 

@@ -148,16 +148,24 @@ async function main() {
     check(!acc2.cancelar && !acc2.reprogramar, "un turno cancelado no ofrece ninguna acción");
 
     // ── Planta con la autogestión apagada ─────────────────────
+    // Ninguna de las tres la tiene apagada hoy: las tres dejan reprogramar dos
+    // veces. Pero el interruptor tiene que seguir funcionando, así que se apaga
+    // para la prueba y se deja como estaba.
     console.log("\n── Planta que no permite reprogramar ──");
     const enMaipu = await prisma.turno.findFirstOrThrow({
       where: { planta: { slug: "maipu" }, estado: EstadoTurno.CONFIRMADO, inicio: { gt: new Date() } },
     });
-    const accM = await acciones(enMaipu.publicId, "maipu");
-    check(!accM.reprogramar, "Maipú no ofrece reprogramar: manda a WhatsApp");
-    const rm = await reprogramar(enMaipu.publicId, "maipu", {
-      lineaId: enMaipu.lineaId!, inicioIso: enMaipu.inicio.toISOString(), duracionMin: enMaipu.duracionMin,
-    });
-    check(!rm.ok && rm.motivo === "NO_PERMITIDO", "y forzarlo por la acción devuelve NO_PERMITIDO");
+    await prisma.planta.update({ where: { slug: "maipu" }, data: { permiteReprogramar: false } });
+    try {
+      const accM = await acciones(enMaipu.publicId, "maipu");
+      check(!accM.reprogramar, "con la autogestión apagada no se ofrece reprogramar");
+      const rm = await reprogramar(enMaipu.publicId, "maipu", {
+        lineaId: enMaipu.lineaId!, inicioIso: enMaipu.inicio.toISOString(), duracionMin: enMaipu.duracionMin,
+      });
+      check(!rm.ok && rm.motivo === "NO_PERMITIDO", "y forzarlo por la acción devuelve NO_PERMITIDO");
+    } finally {
+      await prisma.planta.update({ where: { slug: "maipu" }, data: { permiteReprogramar: true } });
+    }
 
     // ── Turno de otra planta ──────────────────────────────────
     console.log("\n── Aislamiento entre plantas ──");

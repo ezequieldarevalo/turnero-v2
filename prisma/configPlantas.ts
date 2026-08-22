@@ -100,7 +100,8 @@ export const PLANTAS = [
     emailRemitente: "turnoslasheras@revitotal.com.ar",
     emailNombre: "Revitotal Las Heras",
     whatsappContacto: "261-770-0710",
-    permiteReprogramar: false, // manda a WhatsApp en vez de link
+    permiteReprogramar: true,
+    maxReprogramaciones: 2, // después del tope, solo por WhatsApp
     pagoEfectivoHabilitado: true,
     registraRealizacion: true,
     columnasAgenda: COLUMNAS_REVITOTAL,
@@ -121,7 +122,8 @@ export const PLANTAS = [
     emailRemitente: "turnosmaipu@revitotal.com.ar",
     emailNombre: "Revitotal Maipú",
     whatsappContacto: "261-770-0710",
-    permiteReprogramar: false,
+    permiteReprogramar: true,
+    maxReprogramaciones: 2,
     pagoEfectivoHabilitado: true,
     registraRealizacion: true,
     columnasAgenda: COLUMNAS_REVITOTAL,
@@ -146,6 +148,7 @@ export const PLANTAS = [
     emailNombre: "RTO Godoy Cruz",
     whatsappContacto: null,
     permiteReprogramar: true,
+    maxReprogramaciones: 2,
     pagoEfectivoHabilitado: false,
     // Godoy Cruz registra la atención en otro sistema: acá no se ofrece.
     registraRealizacion: false,
@@ -190,6 +193,7 @@ export function datosPlanta(p: PlantaSeed) {
 
       permiteCancelar: true,
       permiteReprogramar: p.permiteReprogramar,
+      maxReprogramaciones: p.maxReprogramaciones,
 
       filtraLineaPorVehiculo: p.filtraLineaPorVehiculo,
       registraRealizacion: p.registraRealizacion,

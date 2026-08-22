@@ -48,7 +48,6 @@ const DEFAULTS_DEL_ESQUEMA: Record<string, unknown> = {
   minutosExpiracionConfirmacion: 1440,
   horasMinimasCancelacion: 0,
   horasMinimasReprogramacion: 0,
-  maxReprogramaciones: null,
   turnosActivosPorPatente: null,
   requiereRadicacionLocal: false,
   camposRequeridos: ["nombre", "dominio", "anio", "email", "telefono", "combustible"],
