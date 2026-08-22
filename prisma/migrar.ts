@@ -4,6 +4,9 @@
  *   npx tsx prisma/migrar.ts maipu
  *   npx tsx prisma/migrar.ts maipu --commit     (sin esto es simulacro)
  *
+ * La base MySQL de origen se deduce del slug; usuario y contraseña salen del
+ * `.env`. Ver `conexionMysql()`.
+ *
  * Es idempotente: borra lo que haya migrado antes de esa planta y lo rehace.
  * Pensado para correrse muchas veces contra una copia hasta que salga limpio.
  *
@@ -28,6 +31,40 @@ const COMMIT = process.argv.includes("--commit");
 if (!slug) {
   console.error("Uso: npx tsx prisma/migrar.ts <slug> [--commit]");
   process.exit(1);
+}
+
+/**
+ * De dónde lee esta planta.
+ *
+ * Cada Laravel tiene su propia base y puede tener su propio usuario, así que las
+ * credenciales se buscan primero con sufijo por planta y después en las
+ * genéricas. Nada de esto se escribe acá: va en el `.env`, que está ignorado por
+ * git.
+ *
+ *   MYSQL_USER_GODOYCRUZ / MYSQL_PASSWORD_GODOYCRUZ / MYSQL_DB_GODOYCRUZ
+ *   MYSQL_USER           / MYSQL_PASSWORD           / MYSQL_DB
+ *
+ * Contra la copia local en Docker no hace falta definir nada: los valores por
+ * defecto son los de siempre.
+ */
+const BASE_LEGACY: Record<string, string> = {
+  godoycruz: "rtogc",
+  lasheras: "lhrevitotal",
+  maipu: "marevitotal",
+};
+
+function conexionMysql(slug: string) {
+  const suf = slug.toUpperCase();
+  const de = (clave: string, porDefecto: string) =>
+    process.env[`${clave}_${suf}`] ?? process.env[clave] ?? porDefecto;
+
+  return {
+    host: de("MYSQL_HOST", "127.0.0.1"),
+    port: Number(de("MYSQL_PORT", "3307")),
+    user: de("MYSQL_USER", "root"),
+    password: de("MYSQL_PASSWORD", "root"),
+    database: de("MYSQL_DB", BASE_LEGACY[slug] ?? slug),
+  };
 }
 
 // Mendoza es UTC-3 todo el año, sin horario de verano.
@@ -62,20 +99,9 @@ async function main() {
   });
   if (!planta) throw new Error(`No existe la planta "${slug}". Corré el seed primero.`);
 
-  // Las credenciales salen del entorno. Contra la copia local sirven las de
-  // siempre; contra producción —por un túnel SSH— son las del `.env` de cada
-  // Laravel, y no tienen por qué quedar escritas en este archivo ni en el
-  // historial del shell:
-  //
-  //   read -s MYSQL_PASSWORD && export MYSQL_PASSWORD
-  const my = await mysql.createConnection({
-    host: process.env.MYSQL_HOST ?? "127.0.0.1",
-    port: Number(process.env.MYSQL_PORT ?? 3307),
-    user: process.env.MYSQL_USER ?? "root",
-    password: process.env.MYSQL_PASSWORD ?? "root",
-    database: process.env.MYSQL_DB ?? "marevitotal",
-    dateStrings: true, // que el driver no toque las fechas
-  });
+  const conexion = conexionMysql(slug);
+  console.log(`Origen MySQL: ${conexion.user}@${conexion.host}:${conexion.port}/${conexion.database}`);
+  const my = await mysql.createConnection({ ...conexion, dateStrings: true });
 
   const q = async <T = any>(sql: string, args: any[] = []): Promise<T[]> =>
     (await my.execute(sql, args))[0] as T[];
@@ -248,6 +274,20 @@ async function main() {
       })).map((t) => [t.legacyId!, t.id]))
     : new Map<number, number>();
 
+  /**
+   * Qué turnos viejos van a existir del otro lado.
+   *
+   * En una corrida real sale de los ids recién insertados. En simulacro no hay
+   * ids, pero sí se sabe cuáles quedaron afuera —los segundos turnos de un cupo
+   * con dos pagos—, y hay que descartar sus cobros igual. Si no, el simulacro
+   * suma toda la plata, informa que los montos coinciden y el chequeo de
+   * conciliación no puede fallar nunca. Es justo el número que se mira antes de
+   * escribir.
+   */
+  const legacyMigrados = COMMIT
+    ? new Set(idPorLegacy.keys())
+    : new Set(aInsertar.map((t) => t.legacyId as number));
+
   const vistos = new Set<string>();
   const pagosSinTurno: any[] = [];
   const pagos: any[] = [];
@@ -262,7 +302,7 @@ async function main() {
     vistos.add(clave);
 
     const turnoId = idPorLegacy.get(c.id_turno);
-    if (COMMIT && !turnoId) { pagosSinTurno.push(c); continue; }
+    if (!legacyMigrados.has(c.id_turno)) { pagosSinTurno.push(c); continue; }
 
     pagos.push({
       plantaId: planta.id,
