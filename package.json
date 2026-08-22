@@ -1,0 +1,45 @@
+{
+  "name": "turnero",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:push": "prisma db push && npm run db:constraints",
+    "db:constraints": "tsx prisma/constraints.ts",
+    "db:seed": "prisma db seed",
+    "db:verify": "tsx prisma/verify.ts && tsx prisma/verify-auth.ts && tsx prisma/verify-disponibilidad.ts && tsx prisma/verify-reserva.ts && tsx prisma/verify-gestion.ts && tsx prisma/verify-mantenimiento.ts && tsx prisma/verify-agenda.ts && tsx prisma/verify-mostrador.ts && tsx prisma/verify-buscar.ts && tsx prisma/verify-atencion.ts && tsx prisma/verify-telefono.ts && tsx prisma/verify-revision.ts && tsx prisma/verify-configuracion.ts && tsx prisma/verify-anticipacion.ts && tsx prisma/verify-precios.ts && tsx prisma/verify-privacidad.ts && tsx prisma/verify-permisos-config.ts && tsx prisma/verify-altas.ts && tsx prisma/verify-validaciones.ts",
+    "db:studio": "prisma studio",
+    "db:reset": "prisma migrate reset",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "db:migrar": "tsx prisma/migrar.ts",
+    "tareas": "tsx prisma/tareas.ts",
+    "usuarios": "tsx prisma/usuarios.ts",
+    "mp:credenciales": "tsx prisma/credenciales.ts",
+    "mail:credenciales": "tsx prisma/smtp.ts",
+    "db:cierres": "tsx prisma/cierres.ts",
+    "politica": "tsx prisma/politica.ts"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.2.1",
+    "mysql2": "^3.23.3",
+    "next": "^16.3.1",
+    "nodemailer": "^9.0.5",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@types/nodemailer": "^8.0.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "prisma": "^6.2.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

@@ -1,0 +1,622 @@
+// Reviturnos — modelo de datos multi-tenant
+//
+// Convenciones:
+//  - Toda tabla de negocio lleva plantaId. Los unique son compuestos por planta.
+//  - Los horarios se guardan en MINUTOS DESDE MEDIANOCHE (480 = 08:00, 950 = 15:50).
+//    Es aritmética trivial para generar slots y permite usar int4range en la
+//    restricción de no solapamiento.
+//  - `hasta` es EXCLUSIVO: se generan turnos mientras inicio < hasta.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Tenancy
+// ─────────────────────────────────────────────────────────────
+
+model Planta {
+  id       Int     @id @default(autoincrement())
+  slug     String  @unique
+  nombre   String
+  direccion String
+  dominio  String? @unique // para cuando un cliente quiera su propio dominio
+
+  /// Hostname del backend viejo de esta planta (ej. marevitotal.reviturnos.com.ar).
+  /// Tras el cutover su DNS apunta acá, y el endpoint legacy /api/auth/notifMeli
+  /// resuelve la planta por el Host. Es lo que permite seguir recibiendo los
+  /// webhooks de cupones en efectivo emitidos antes de migrar — que pueden llegar
+  /// hasta dos semanas después— sin mantener vivo el droplet viejo.
+  /// Se puede borrar cuando ya no queden pagos en vuelo.
+  hostLegacy String? @unique
+  timezone String  @default("America/Argentina/Mendoza")
+  activa   Boolean @default(true)
+
+  // Presentación
+  colorPrimario    String  @default("#74ACDF")
+  colorAdvertencia String  @default("#d68227")
+  marcaTipo        String  @default("texto") // texto | logo
+  marcaValor       String // el texto, o la URL del logo
+
+  // Contacto
+  whatsappContacto String?
+  emailRemitente   String
+  emailNombre      String
+  asuntoMail       String  @default("Turno de revisión técnica")
+
+  // Ventana de reserva
+  diasVentanaReserva      Int @default(120)
+  /// Cuánto falta como mínimo para un turno que se puede reservar, en minutos.
+  /// Va en minutos y no en días porque un día es demasiado grueso: para quien
+  /// paga online alcanza con un par de horas, y redondear a "mañana" tira a la
+  /// basura los cupos libres de esta tarde.
+  minutosMinimosAnticipacion Int @default(120)
+  /// El mínimo para poder elegir EFECTIVO, que es bastante mayor: el cupón vive
+  /// unas horas, la persona lo paga cuando puede, y la acreditación tarda. Un
+  /// turno más cercano que esto se puede sacar igual, pero solo pagando online.
+  /// Por debajo del mínimo general no tiene sentido: se toma el mayor de los dos.
+  minutosMinimosEfectivo Int @default(3000)
+
+  // Pago
+  requierePago           Boolean @default(true)
+  minutosExpiracionPago  Int     @default(120)
+  /// Cuánto se retiene el cupo esperando que la persona acepte por mail
+  /// un turno cargado por teléfono. Más largo que el de pago: el mail
+  /// puede tardar en leerse.
+  minutosExpiracionConfirmacion Int @default(1440)
+  pagoEfectivoHabilitado Boolean @default(false)
+  pagoEfectivoMinutos    Int     @default(2880)
+  margenPostEfectivoMin  Int     @default(120)
+  mediosPagoExcluidos    Json    @default("[]")
+
+  // Autogestión del cliente
+  permiteCancelar            Boolean @default(true)
+  permiteReprogramar         Boolean @default(true)
+  horasMinimasCancelacion    Int     @default(0)
+  horasMinimasReprogramacion Int     @default(0)
+  maxReprogramaciones        Int? // null = ilimitado
+
+  // Reglas de negocio
+  filtraLineaPorVehiculo  Boolean @default(true)
+  turnosActivosPorPatente Int? // null = ilimitado
+  requiereRadicacionLocal Boolean @default(false)
+  jurisdiccion            String?
+
+  // Formulario y catálogos de la planta
+  camposRequeridos  Json @default("[\"nombre\",\"dominio\",\"anio\",\"email\",\"telefono\",\"combustible\"]")
+  tiposCombustible  Json @default("[\"NAFTA\",\"DIESEL\",\"GAS\"]")
+
+  // Consola de administración
+  /// Si la planta marca acá el turno como atendido. Godoy Cruz lo registra en
+  /// otro sistema, así que la acción no se le ofrece: mostrar un botón que
+  /// duplica lo que ya se lleva en otro lado es pedir que los dos números
+  /// dejen de coincidir.
+  registraRealizacion Boolean @default(true)
+  /// Columnas visibles en la tabla de turnos de un día, en orden. Las tres
+  /// consolas viejas resolvían esto comentando y descomentando las mismas
+  /// líneas en cada copia del archivo.
+  /// Valores: orden | numero | estado | fecha | hora | dominio | nombre |
+  ///          tipoVehiculo | pago | telefono
+  columnasAgenda Json @default("[\"hora\",\"dominio\",\"nombre\",\"tipoVehiculo\",\"pago\"]")
+
+  // Textos
+  avisos        Json    @default("[]") // [{texto, destacado}] ordenado
+  avisoTarifa   String?
+  avisoTemporal Json? // {texto, severidad}
+
+  creadoAt      DateTime @default(now())
+  actualizadoAt DateTime @updatedAt
+
+  usuarios       UsuarioPlanta[]
+  lineas         Linea[]
+  horarios       Horario[]
+  feriados       Feriado[]
+  excepciones    ExcepcionCupo[]
+  turnos         Turno[]
+  pagos          Pago[]
+  tiposVehiculo  PlantaTipoVehiculo[]
+  mpCredencial   MpCredencial?
+  smtp           CredencialSmtp?
+  mpEventos      MpEvento[]
+  ocupacion      OcupacionDiaria[]
+  auditoria      AuditLog[]
+  precios        PrecioVigencia[]
+
+  @@map("plantas")
+}
+
+model Usuario {
+  id           Int      @id @default(autoincrement())
+  email        String   @unique
+  passwordHash String
+  nombre       String
+  activo       Boolean  @default(true)
+  /// Quien opera el servicio, no un cliente: ve todas las plantas, incluidas
+  /// las que se den de alta después.
+  esSuperadmin Boolean  @default(false)
+  creadoAt     DateTime @default(now())
+
+  plantas       UsuarioPlanta[]
+  sesiones      Sesion[]
+  pagosRevisados Pago[]
+  preciosPuestos PrecioVigencia[]
+  auditoria     AuditLog[]
+  turnosCreados Turno[]        @relation("TurnosCreados")
+
+  @@map("usuarios")
+}
+
+/// Rol DENTRO de una planta. El superadmin no está acá: administrar el
+/// servicio no es un rol dentro de un cliente, y modelarlo como una fila por
+/// planta significaría que cada planta nueva lo deja afuera hasta que alguien
+/// se acuerde de agregarlo. Va como bandera en el usuario.
+enum Rol {
+  DUENO
+  OPERADOR
+}
+
+/// Sesión del panel de administración.
+///
+/// En la base va el SHA-256 del token, no el token: quien lea la tabla no puede
+/// hacerse pasar por nadie. La consola vieja guardaba el token de acceso en
+/// `localStorage`, donde cualquier script de la página lo podía leer.
+model Sesion {
+  /// SHA-256 del token que viaja en la cookie.
+  tokenHash String   @id
+  usuarioId Int
+  expiraAt  DateTime @db.Timestamptz(3)
+  ip        String?
+  userAgent String?
+  creadaAt  DateTime @default(now())
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([usuarioId])
+  @@index([expiraAt])
+  @@map("sesiones")
+}
+
+model UsuarioPlanta {
+  usuarioId Int
+  plantaId  Int
+  rol       Rol
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  planta  Planta  @relation(fields: [plantaId], references: [id], onDelete: Cascade)
+
+  @@id([usuarioId, plantaId])
+  @@map("usuario_planta")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Catálogo de vehículos (global) y oferta por planta
+// ─────────────────────────────────────────────────────────────
+
+model CategoriaVehiculo {
+  id     Int    @id @default(autoincrement())
+  codigo String @unique // L, M, P
+  nombre String
+
+  tipos  TipoVehiculo[]
+  lineas Linea[]
+
+  @@map("categorias_vehiculo")
+}
+
+model TipoVehiculo {
+  id          Int    @id @default(autoincrement())
+  categoriaId Int
+  nombre      String @unique
+
+  categoria CategoriaVehiculo    @relation(fields: [categoriaId], references: [id])
+  plantas   PlantaTipoVehiculo[]
+  precios   PrecioVigencia[]
+  turnos    Turno[]
+
+  @@map("tipos_vehiculo")
+}
+
+/// Precio de un tipo de vehículo en una planta, con su fecha de entrada en
+/// vigencia.
+///
+/// El precio no es un dato del presente: cambia por resolución, con fecha
+/// anunciada de antemano, y hay que poder decir cuánto costaba en marzo tanto
+/// como cuánto va a costar el mes que viene. Guardarlo como un solo número
+/// obliga a entrar a cambiarlo el día exacto —a mano, en horario de atención—
+/// y borra la historia en el momento en que se pisa.
+///
+/// El vigente es la fila con el `vigenteDesde` más grande que ya pasó. Un
+/// cambio inmediato y uno programado son la misma cosa con distinta fecha.
+model PrecioVigencia {
+  id             Int      @id @default(autoincrement())
+  plantaId       Int
+  tipoVehiculoId Int
+  precio         Int // en pesos, sin decimales
+  vigenteDesde   DateTime @db.Timestamptz(3)
+  creadoPorId    Int?
+  creadoAt       DateTime @default(now())
+
+  planta    Planta       @relation(fields: [plantaId], references: [id], onDelete: Cascade)
+  tipo      TipoVehiculo @relation(fields: [tipoVehiculoId], references: [id])
+  creadoPor Usuario?     @relation(fields: [creadoPorId], references: [id])
+
+  @@unique([plantaId, tipoVehiculoId, vigenteDesde])
+  @@index([plantaId, vigenteDesde])
+  @@map("precios_vigencia")
+}
+
+/// Qué tipos ofrece una planta, con qué nombre y en qué orden.
+///
+/// El precio NO está acá: tiene fecha de vigencia y vive en `PrecioVigencia`.
+/// Tenerlo en esta fila obligaría a elegir una fecha cada vez que se corrige
+/// una falta de ortografía en el nombre, y borraría la historia al pisarlo.
+model PlantaTipoVehiculo {
+  plantaId       Int
+  tipoVehiculoId Int
+  nombreDisplay  String? // override del nombre del catálogo
+  /// Orden en que se listan en el selector. Hoy está fijo en el código
+  /// (`vehicleTypeList` en lib/constants.ts) e igual para las tres plantas;
+  /// una planta que vive de las motos las va a querer primero.
+  orden          Int     @default(0)
+  activo         Boolean @default(true)
+
+  planta Planta       @relation(fields: [plantaId], references: [id], onDelete: Cascade)
+  tipo   TipoVehiculo @relation(fields: [tipoVehiculoId], references: [id])
+
+  @@id([plantaId, tipoVehiculoId])
+  @@map("planta_tipo_vehiculo")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Líneas y horarios
+// ─────────────────────────────────────────────────────────────
+
+model Linea {
+  id          Int     @id @default(autoincrement())
+  plantaId    Int
+  categoriaId Int
+  numero      String // "1", "2" — el nombre visible se compone: categoría + número
+  activa      Boolean @default(true)
+
+  planta    Planta            @relation(fields: [plantaId], references: [id], onDelete: Cascade)
+  categoria CategoriaVehiculo @relation(fields: [categoriaId], references: [id])
+  horarios  Horario[]
+  turnos    Turno[]
+  excepciones ExcepcionCupo[]
+  ocupacion OcupacionDiaria[]
+
+  @@unique([plantaId, categoriaId, numero])
+  @@map("lineas")
+}
+
+/// Una fila por banda horaria. N franjas por día = N filas: no hay numeración.
+/// Resolución: lo más específico gana (mes puesto > mes null; linea puesta > linea null).
+/// El no solapamiento se garantiza con un EXCLUDE en 001_constraints.sql.
+model Horario {
+  id           Int  @id @default(autoincrement())
+  plantaId     Int
+  lineaId      Int? // null = todas las líneas de la planta
+  mes          Int? // null = todos los meses (1..12)
+  diaSemana    Int // 0 = domingo .. 6 = sábado. Sin fila = cerrado.
+  desde        Int // minutos desde medianoche
+  hasta        Int // exclusivo
+  slotsPorHora Int
+
+  planta Planta @relation(fields: [plantaId], references: [id], onDelete: Cascade)
+  linea  Linea? @relation(fields: [lineaId], references: [id], onDelete: Cascade)
+
+  @@index([plantaId, diaSemana])
+  @@map("horarios")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Calendario
+// ─────────────────────────────────────────────────────────────
+
+model Feriado {
+  id          Int      @id @default(autoincrement())
+  plantaId    Int
+  fecha       DateTime @db.Date
+  descripcion String
+
+  planta Planta @relation(fields: [plantaId], references: [id], onDelete: Cascade)
+
+  @@unique([plantaId, fecha])
+  @@map("feriados")
+}
+
+enum TipoExcepcion {
+  BLOQUEAR
+  AGREGAR
+}
+
+/// Manipulación manual de cupos sueltos: bloquear un horario por mantenimiento,
+/// o abrir uno extra. Repone lo que el modelo de cupos materializados daba gratis.
+model ExcepcionCupo {
+  id       Int           @id @default(autoincrement())
+  plantaId Int
+  lineaId  Int
+  inicio   DateTime      @db.Timestamptz(3)
+  tipo     TipoExcepcion
+  cantidad Int           @default(1)
+  motivo   String?
+  creadoAt DateTime      @default(now())
+
+  planta Planta @relation(fields: [plantaId], references: [id], onDelete: Cascade)
+  linea  Linea  @relation(fields: [lineaId], references: [id], onDelete: Cascade)
+
+  @@index([plantaId, inicio])
+  @@map("excepciones_cupo")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Protección de datos
+// ─────────────────────────────────────────────────────────────
+
+/// Textos legales versionados. Nunca se editan: se crea una versión nueva.
+/// Si dentro de dos años cambia la política, hay que poder demostrar
+/// qué texto exacto aceptó cada persona el día que reservó.
+model PoliticaPrivacidad {
+  id           Int      @id @default(autoincrement())
+  version      String   @unique // "2026-08-15", "v1"
+  texto        String
+  vigenteDesde DateTime @db.Timestamptz(3)
+  creadoAt     DateTime @default(now())
+
+  turnos Turno[]
+
+  @@map("politicas_privacidad")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Turnos
+// ─────────────────────────────────────────────────────────────
+
+enum EstadoTurno {
+  /// Turno cargado por un operador (típicamente por teléfono). El cupo queda
+  /// retenido, pero el turno no vale hasta que la persona acepta por mail.
+  /// Es lo que resuelve el consentimiento: lo da el titular con su propio
+  /// click, no el operador afirmando que se lo leyó.
+  PENDIENTE_CONFIRMACION
+  PENDIENTE_PAGO
+  CONFIRMADO
+  COMPLETADO
+  CANCELADO
+  EXPIRADO
+  AUSENTE
+}
+
+enum OrigenTurno {
+  WEB
+  ADMIN
+}
+
+model Turno {
+  id Int @id @default(autoincrement())
+
+  /// Identificador opaco para las URLs que van por mail (cancelar, reprogramar).
+  /// El id entero queda para uso interno y para el remapeo en la migración;
+  /// hacia afuera nunca se expone, porque es secuencial y enumerable — que es
+  /// justamente el agujero que tiene el sistema viejo.
+  publicId String @unique @default(uuid(7))
+
+  plantaId       Int
+  /// Null = no ocupó cupo: es una atención sin turno previo, alguien que llegó
+  /// al mostrador. El índice parcial de cupos no le aplica, porque en Postgres
+  /// dos NULL nunca chocan entre sí — que es exactamente lo que se quiere:
+  /// pueden entrar varias en el mismo instante. El sistema viejo lo resolvía
+  /// poniendo `id_linea = 0`, una línea que no existe.
+  lineaId        Int?
+  tipoVehiculoId Int
+  inicio         DateTime    @db.Timestamptz(3)
+  duracionMin    Int
+  estado         EstadoTurno
+  origen         OrigenTurno @default(WEB)
+  observaciones  String?
+  venceAt        DateTime?   @db.Timestamptz(3)
+
+  // Datos del titular y del vehículo (antes tabla datos_turno, relación 1:1)
+  dominio         String
+  titularNombre   String
+  titularEmail    String
+  titularTelefono String?
+  marca           String?
+  modelo          String?
+  anio            Int?
+  combustible     String?
+  radicacionLocal Boolean @default(true)
+
+  reprogramaciones Int @default(0)
+
+  /// Preferencia de MercadoPago y su link de pago. Viven acá y no en `pagos`
+  /// porque una preferencia es una intención, no un pago: mezclarlas haría que
+  /// sumar `pagos.monto` contara como facturación algo que nadie abonó.
+  /// El link se reenvía por correo y se muestra mientras el turno esté impago.
+  preferenciaId String?
+  pagoUrl       String?
+
+  /// Consentimiento informado, capturado al reservar. No alcanza con un booleano:
+  /// hay que poder demostrar QUÉ texto aceptó y CUÁNDO. Es null en los turnos
+  /// migrados del sistema viejo, que nunca lo pidieron — y no se puede
+  /// reconstruir hacia atrás.
+  politicaId       Int?
+  consentimientoAt DateTime? @db.Timestamptz(3)
+  consentimientoIp String?
+
+  /// Qué operador cargó el turno. Null cuando lo sacó la propia persona por la web.
+  /// Hoy no se puede medir cuántos turnos entran por teléfono, porque el operador
+  /// los carga haciéndose pasar por el cliente en el sitio público.
+  creadoPorId Int?
+
+  // Trazabilidad de la migración
+  legacyPlanta String?
+  legacyId     Int?
+
+  /// El `external_reference` que el sistema viejo mandó a MercadoPago:
+  /// `id_turno + ddmmYYYYHHiiss + dominio`, concatenado sin separador.
+  /// Los webhooks en vuelo durante el cutover llegan con esta cadena, y parsearla
+  /// es ambiguo porque el id no tiene largo fijo. Se guarda tal cual y se busca
+  /// por igualdad exacta. Se puede borrar unas semanas después del último cutover.
+  legacyExternalRef String? @unique
+
+  creadoAt      DateTime @default(now())
+  actualizadoAt DateTime @updatedAt
+
+  planta   Planta              @relation(fields: [plantaId], references: [id])
+  linea    Linea?              @relation(fields: [lineaId], references: [id])
+  tipo     TipoVehiculo        @relation(fields: [tipoVehiculoId], references: [id])
+  politica PoliticaPrivacidad? @relation(fields: [politicaId], references: [id])
+  creadoPor Usuario?           @relation("TurnosCreados", fields: [creadoPorId], references: [id])
+  pagos    Pago[]
+
+  // NO declarar aquí @@unique([lineaId, inicio]): tiene que ser un índice PARCIAL
+  // sobre los estados que ocupan el cupo, para que al cancelar quede libre.
+  // Vive en la migración 002_constraints. Si se declara acá, `prisma db push`
+  // recrea el unique completo y pisa el parcial — ya pasó una vez.
+  @@index([plantaId, inicio])
+  @@index([plantaId, dominio])
+  @@index([legacyPlanta, legacyId])
+  @@map("turnos")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Pagos
+// ─────────────────────────────────────────────────────────────
+
+/// Credenciales de envío de correo, por planta. Hoy cada una manda desde su
+/// propia casilla —turnoslasheras@revitotal.com.ar, etc.— y eso conviene
+/// conservarlo: el remitente coincide con el dominio de la planta, que es lo
+/// que hace que el correo no caiga en spam.
+model CredencialSmtp {
+  plantaId        Int      @id
+  host            String
+  puerto          Int      @default(587)
+  usuario         String
+  passwordCifrada String
+  seguro          Boolean  @default(false) // true = SSL directo (465)
+  actualizadoAt   DateTime @updatedAt
+
+  planta Planta @relation(fields: [plantaId], references: [id], onDelete: Cascade)
+
+  @@map("credenciales_smtp")
+}
+
+model MpCredencial {
+  plantaId            Int      @id
+  accessTokenCifrado  String
+  publicKey           String
+  webhookSecretCifrado String
+  actualizadoAt       DateTime @updatedAt
+
+  planta Planta @relation(fields: [plantaId], references: [id], onDelete: Cascade)
+
+  @@map("mp_credenciales")
+}
+
+enum ProveedorPago {
+  MERCADOPAGO
+  YACARE // solo histórico: discontinuado
+  EFECTIVO
+}
+
+model Pago {
+  id             Int           @id @default(autoincrement())
+  plantaId       Int
+  /// Null = llegó plata que no se pudo atar a ningún turno: una referencia que
+  /// no existe, o un cupón del sistema viejo cobrado después del cutover. Se
+  /// asienta igual y queda para revisión — perderla sería peor que no saber a
+  /// quién corresponde.
+  turnoId        Int?
+  proveedor      ProveedorPago
+  paymentId      String
+  preferenceId   String?
+  estado         String
+  monto          Int
+  metodo         String?
+  fechaPago      DateTime?     @db.Timestamptz(3)
+  raw            Json?
+  legacyId       Int?
+
+  /// Se marca cuando llega un pago que no se puede aplicar: el cupón en efectivo
+  /// de un turno ya cancelado, o de uno cuyo cupo tomó otra persona mientras el
+  /// pago estaba pendiente. El pago se registra igual —la plata entró— pero el
+  /// turno no se resucita: queda para revisión y eventual devolución.
+  /// El sistema viejo, en cambio, lo revivía en silencio y después crasheaba.
+  requiereRevision Boolean  @default(false)
+  motivoRevision   String?
+  /// Quién lo revisó, cuándo y qué decidió. Bajar la bandera sin dejar rastro
+  /// convertiría la lista en un botón de "ocultar": el que viene después no
+  /// sabría si el caso se resolvió o alguien lo hizo desaparecer.
+  revisadoAt     DateTime?     @db.Timestamptz(3)
+  revisadoPorId  Int?
+  notaRevision   String?
+
+  creadoAt       DateTime      @default(now())
+
+  planta      Planta   @relation(fields: [plantaId], references: [id])
+  turno       Turno?   @relation(fields: [turnoId], references: [id])
+  revisadoPor Usuario? @relation(fields: [revisadoPorId], references: [id])
+
+  // Lo que hace estructuralmente imposible el bug de cobros duplicados.
+  @@unique([proveedor, paymentId])
+  @@index([turnoId])
+  @@index([plantaId, requiereRevision])
+  @@map("pagos")
+}
+
+/// Idempotencia del webhook. Si el evento ya está, se responde 200 y se corta.
+model MpEvento {
+  paymentId   String   @id
+  plantaId    Int
+  procesadoAt DateTime @default(now())
+
+  planta Planta @relation(fields: [plantaId], references: [id])
+
+  @@map("mp_eventos")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Ocupación y auditoría
+// ─────────────────────────────────────────────────────────────
+
+/// Snapshot diario. Permite responder "cuántos cupos ofrecí en marzo de 2024"
+/// aunque los horarios hayan cambiado desde entonces.
+model OcupacionDiaria {
+  plantaId  Int
+  lineaId   Int
+  fecha     DateTime @db.Date
+  ofrecidos Int
+  vendidos  Int
+
+  planta Planta @relation(fields: [plantaId], references: [id], onDelete: Cascade)
+  linea  Linea  @relation(fields: [lineaId], references: [id], onDelete: Cascade)
+
+  @@id([plantaId, lineaId, fecha])
+  @@map("ocupacion_diaria")
+}
+
+/// No se puede reconstruir hacia atrás: o se registra desde el arranque,
+/// o esa información no existe.
+model AuditLog {
+  id           Int      @id @default(autoincrement())
+  plantaId     Int
+  usuarioId    Int?
+  accion       String
+  entidad      String
+  entidadId    Int?
+  datosAntes   Json?
+  datosDespues Json?
+  ip           String?
+  creadoAt     DateTime @default(now())
+
+  planta  Planta   @relation(fields: [plantaId], references: [id])
+  usuario Usuario? @relation(fields: [usuarioId], references: [id])
+
+  @@index([plantaId, creadoAt])
+  @@map("audit_log")
+}
