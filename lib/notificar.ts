@@ -15,7 +15,13 @@ import {
   type DatosTurnoCorreo,
 } from "@/lib/plantillas";
 
-async function datos(publicId: string): Promise<(DatosTurnoCorreo & { plantaId: number; slug: string; email: string }) | null> {
+/**
+ * Arma los datos que consumen las plantillas. Exportado para que
+ * `verify-correos.ts` pueda renderizar los seis correos contra turnos reales:
+ * lo que se rompe acá no es el envío, es un campo nulo que llega a la plantilla
+ * y sale como "undefined" en el correo de alguien.
+ */
+export async function datosDeCorreo(publicId: string): Promise<(DatosTurnoCorreo & { plantaId: number; slug: string; email: string }) | null> {
   const t = await prisma.turno.findUnique({
     where: { publicId },
     include: {
@@ -62,7 +68,7 @@ async function datos(publicId: string): Promise<(DatosTurnoCorreo & { plantaId: 
 
 /** Al reservar: incluye el link de pago real, para poder pagar más tarde. */
 export async function notificarReserva(publicId: string) {
-  const d = await datos(publicId);
+  const d = await datosDeCorreo(publicId);
   if (!d) return;
   const { asunto, html } = turnoReservado(d);
   await enviarSinFallar(d.plantaId, d.slug, { para: d.email, asunto, html });
@@ -70,21 +76,21 @@ export async function notificarReserva(publicId: string) {
 
 /** Al acreditarse el pago. */
 export async function notificarConfirmacion(publicId: string) {
-  const d = await datos(publicId);
+  const d = await datosDeCorreo(publicId);
   if (!d) return;
   const { asunto, html } = turnoConfirmado(d);
   await enviarSinFallar(d.plantaId, d.slug, { para: d.email, asunto, html });
 }
 
 export async function notificarCancelacion(publicId: string) {
-  const d = await datos(publicId);
+  const d = await datosDeCorreo(publicId);
   if (!d) return;
   const { asunto, html } = turnoCancelado(d);
   await enviarSinFallar(d.plantaId, d.slug, { para: d.email, asunto, html });
 }
 
 export async function notificarReprogramacion(publicId: string) {
-  const d = await datos(publicId);
+  const d = await datosDeCorreo(publicId);
   if (!d) return;
   const { asunto, html } = turnoReprogramado(d);
   await enviarSinFallar(d.plantaId, d.slug, { para: d.email, asunto, html });
@@ -92,7 +98,7 @@ export async function notificarReprogramacion(publicId: string) {
 
 /** Turno cargado por teléfono: se le pide al titular que lo acepte. */
 export async function notificarPorConfirmar(publicId: string) {
-  const d = await datos(publicId);
+  const d = await datosDeCorreo(publicId);
   if (!d) return;
   const base = process.env.PUBLIC_BASE_URL ?? "http://localhost:3000";
   const planta = await prisma.planta.findUniqueOrThrow({
@@ -115,7 +121,7 @@ export async function notificarPorConfirmar(publicId: string) {
  * pendiente, y decírselo así lo dejaría buscando un cobro que no existe.
  */
 export async function notificarVencimiento(publicId: string, sinConfirmar = false) {
-  const d = await datos(publicId);
+  const d = await datosDeCorreo(publicId);
   if (!d) return;
   const { asunto, html } = turnoVencido({ ...d, sinConfirmar });
   await enviarSinFallar(d.plantaId, d.slug, { para: d.email, asunto, html });
