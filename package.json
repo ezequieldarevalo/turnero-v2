@@ -20,7 +20,8 @@
     "mp:credenciales": "tsx prisma/credenciales.ts",
     "mail:credenciales": "tsx prisma/smtp.ts",
     "db:cierres": "tsx prisma/cierres.ts",
-    "politica": "tsx prisma/politica.ts"
+    "politica": "tsx prisma/politica.ts",
+    "config:comparar": "tsx prisma/comparar-config.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
