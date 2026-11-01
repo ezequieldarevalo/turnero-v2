@@ -42,10 +42,10 @@ export const LINEAS = [
 ];
 
 export const OFERTA = [
-  { nombre: "AUTO PARTICULAR", precio: 58600 },
-  { nombre: "MOTO HASTA 300 CC", precio: 21700 },
-  { nombre: "MOTO MAS DE 300 CC", precio: 40500 },
-  { nombre: "CAMIONETA PARTICULAR", precio: 64700 },
+  { nombre: "AUTO PARTICULAR", precio: 70000 },
+  { nombre: "MOTO HASTA 300 CC", precio: 26000 },
+  { nombre: "MOTO MAS DE 300 CC", precio: 48500 },
+  { nombre: "CAMIONETA PARTICULAR", precio: 77500 },
 ];
 
 // Las Heras y Maipú renombran dos tipos en la pantalla. Godoy Cruz usa el del catálogo.
